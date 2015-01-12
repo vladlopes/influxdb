@@ -20,17 +20,17 @@ type serverResponse struct {
 	values                          map[string]interface{}
 }
 
-var responses serverResponses
+var responses = make(chan *serverResponse, 1024)
 
 func (testServer) WriteSeries(database, retentionPolicy, name string, tags map[string]string, timestamp time.Time, values map[string]interface{}) error {
-	responses = append(responses, serverResponse{
+	responses <- &serverResponse{
 		database:        database,
 		retentionPolicy: retentionPolicy,
 		name:            name,
 		tags:            tags,
 		timestamp:       timestamp,
 		values:          values,
-	})
+	}
 	return nil
 }
 
@@ -137,9 +137,7 @@ func TestServer_ListenAndServe_ErrListenUDP(t *testing.T) {
 }
 
 func TestServer_Serve_Success(t *testing.T) {
-	t.Skip()
 	// clear any previous responses
-	responses = serverResponses{}
 	var (
 		ts testServer
 		// You can typically find this on your mac here: "/usr/local/Cellar/collectd/5.4.1/share/collectd/types.db"
@@ -167,10 +165,21 @@ func TestServer_Serve_Success(t *testing.T) {
 	if e != nil {
 		t.Fatalf("err does not match.  expected %v, got %v", nil, e)
 	}
-	if len(responses) < 1 {
-		t.Error("didn't get any respones,")
-	}
 
+	expectedRespCnt := 33
+	var resps []*serverResponse
+	for {
+		select {
+			case r := <- responses:
+				resps = append(resps, r)
+				if len(resps) == expectedRespCnt {
+					return
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("timed out after %d of %d expected responses", len(resps), expectedRespCnt)
+				return
+		}
+	}
 }
 
 func TestUnmarshal_Metrics(t *testing.T) {
